@@ -49,9 +49,7 @@ El proyecto utiliza una arquitectura organizada por capas:
 
 Se utiliza Oracle Autonomous AI Database.
 
-Esquema:
-
-`FORO_APP`
+**Esquema:** `FORO_APP`
 
 Tablas utilizadas directamente por este microservicio:
 
@@ -85,9 +83,9 @@ El proyecto utiliza el archivo:
 
 `src/main/resources/application.properties`
 
-Las credenciales se obtienen mediante variables de entorno.
+Las credenciales y los datos de conexión se obtienen mediante variables de entorno.
 
-Variables requeridas:
+### Variables requeridas
 
 | Variable | Descripción |
 |----------|-------------|
@@ -96,17 +94,25 @@ Variables requeridas:
 | DB_PASSWORD | Contraseña de Oracle |
 | JWT_SECRET | Clave secreta para firmar y validar JWT |
 
-La URL de conexión se configura mediante la variable de entorno DB_URL.
+### Configuración de Oracle
+
+La URL de conexión se configura mediante la variable de entorno `DB_URL`.
 
 Ejemplo para Windows PowerShell:
 
 ```powershell
 $env:DB_URL = "jdbc:oracle:thin:@crisdevdb_medium?TNS_ADMIN=C:/ruta/local/oracle-wallet/CrisDevDB"
+```
 
+Cada usuario debe reemplazar la ruta de ejemplo por la ubicación de su wallet de Oracle.
+
+El usuario y la contraseña de Oracle se configuran mediante las variables `DB_USERNAME` y `DB_PASSWORD`.
+
+### Configuración de JWT
 
 La variable `JWT_SECRET` debe contener una clave Base64 que represente al menos 32 bytes aleatorios.
 
-También se requiere disponer del wallet de Oracle Autonomous Database y configurar correctamente su ubicación en `application.properties`.
+El microservicio utiliza JWT para autenticar solicitudes y controlar el acceso según el rol del usuario.
 
 **Importante:** las contraseñas, claves JWT y archivos del wallet no deben publicarse en GitHub.
 
@@ -248,8 +254,15 @@ Resultado:
 
 ## 11. Scripts SQL
 
-Los scripts SQL se entregan por separado para documentar y reproducir la configuración de la base de datos.
+Los scripts SQL se encuentran en la carpeta `database/` del repositorio.
 
-Incluyen la creación del esquema, las tablas, la inserción de datos iniciales y las consultas de verificación.
+| Script | Descripción |
+|--------|-------------|
+| 01_crear_usuario.sql | Creación del usuario y asignación de permisos en Oracle |
+| 02_crear_tablas.sql | Creación de las tablas y sus relaciones |
+| 03_insertar_datos.sql | Inserción de datos iniciales |
+| 04_consultas_verificacion.sql | Consultas para verificar los datos almacenados |
 
-Estos scripts deberán ejecutarse con los permisos correspondientes y en el orden indicado.
+Los scripts deben ejecutarse en el orden indicado y utilizando las credenciales y permisos correspondientes.
+
+El script de creación del usuario contiene una contraseña de ejemplo que debe reemplazarse por una contraseña segura antes de ejecutarlo.
