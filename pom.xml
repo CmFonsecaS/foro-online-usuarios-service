@@ -73,6 +73,12 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <!-- HEALTH CHECK USADO POR EL DESPLIEGUE EN EC2 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
         <!-- ORACLE JDBC Y SOPORTE WALLET -->
         <dependency>
             <groupId>com.oracle.database.jdbc</groupId>
