@@ -155,15 +155,25 @@ URL base:
 |--------|----------|-------------|
 | POST | /api/auth/login | Autenticar usuario y obtener JWT |
 
+### Registro y perfil
+
+| Método | Endpoint | Descripción | Acceso |
+|--------|----------|-------------|--------|
+| POST | /api/usuarios | Registrar usuario (rol USUARIO) | Público |
+| GET | /api/usuarios/me | Consultar el perfil propio | Autenticado |
+| PUT | /api/usuarios/me | Modificar el perfil propio | Autenticado |
+| PUT | /api/usuarios/me/password | Cambiar la contraseña propia | Autenticado |
+
 ### Gestión de usuarios
 
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| GET | /api/usuarios | Listar usuarios |
-| GET | /api/usuarios/{id} | Consultar usuario por ID |
-| POST | /api/usuarios | Crear usuario |
-| PUT | /api/usuarios/{id} | Actualizar usuario |
-| DELETE | /api/usuarios/{id} | Eliminar usuario |
+| Método | Endpoint | Descripción | Acceso |
+|--------|----------|-------------|--------|
+| GET | /api/usuarios | Listar usuarios | ADMIN |
+| GET | /api/usuarios/{id} | Consultar usuario por ID | ADMIN |
+| PUT | /api/usuarios/{id} | Actualizar usuario | ADMIN |
+| PATCH | /api/usuarios/{id}/rol | Cambiar rol (ADMIN, MODERADOR, USUARIO) | ADMIN |
+| PATCH | /api/usuarios/{id}/estado | Activar o desactivar usuario | ADMIN |
+| DELETE | /api/usuarios/{id} | Eliminar usuario | ADMIN |
 
 ## 8. Autenticación JWT
 
@@ -247,10 +257,12 @@ Se ejecutó:
 
 Resultado:
 
-- Tests ejecutados: 2
+- Tests ejecutados: 10 (1 omitido: prueba de contexto que requiere conexión a Oracle)
 - Fallos: 0
 - Errores: 0
 - BUILD SUCCESS
+
+Las pruebas unitarias cubren el servicio de usuarios y la autenticación con JWT.
 
 ## 11. Scripts SQL
 
@@ -262,7 +274,76 @@ Los scripts SQL se encuentran en la carpeta `database/` del repositorio.
 | 02_crear_tablas.sql | Creación de las tablas y sus relaciones |
 | 03_insertar_datos.sql | Inserción de datos iniciales |
 | 04_consultas_verificacion.sql | Consultas para verificar los datos almacenados |
+| 05_insertar_moderador.sql | Inserción del usuario de demostración con rol MODERADOR |
 
 Los scripts deben ejecutarse en el orden indicado y utilizando las credenciales y permisos correspondientes.
 
 El script de creación del usuario contiene una contraseña de ejemplo que debe reemplazarse por una contraseña segura antes de ejecutarlo.
+
+## 12. Despliegue en AWS
+
+El microservicio se ejecuta como contenedor Docker en una instancia Amazon EC2, junto con los demás
+microservicios y el frontend. Nginx actúa como proxy inverso y expone todo bajo una única URL pública;
+las solicitudes a `/api/auth/** y /api/usuarios/**` se envían a este servicio (puerto interno `8081`).
+
+| Componente | Uso |
+|---|---|
+| Amazon ECR | Repositorio de imágenes `foro-online/usuarios-service` |
+| Amazon EC2 | Host Docker + Nginx, creado con CloudFormation (`foro-frontend/ec2/foro-online-ec2-stack.yml`) |
+| AWS Systems Manager | Despliegue remoto en la instancia, sin SSH |
+| Amazon S3 | Bucket privado con el wallet de Oracle |
+| AWS Secrets Manager | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` y `JWT_SECRET` |
+
+El workflow `.github/workflows/publish-ecr.yml` se ejecuta en cada push a `main` que modifica código
+(los cambios solo de documentación se omiten):
+
+1. Ejecuta las pruebas con Maven.
+2. Construye la imagen Docker y la publica en ECR con las etiquetas `latest` y el SHA del commit.
+3. Despliega en EC2 mediante Systems Manager: descarga el wallet desde S3, lee las credenciales desde
+   Secrets Manager, reemplaza el contenedor y verifica `/actuator/health`. Si el servicio no queda
+   disponible, restaura la versión anterior.
+
+Configuración del repositorio en GitHub:
+
+- **Secrets:** `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`.
+- **Variables:** `AWS_REGION`, `EC2_INSTANCE_ID`, `ORACLE_CREDENTIALS_SECRET_ARN`,
+  `ORACLE_WALLET_S3_BUCKET`, `ORACLE_WALLET_S3_KEY`.
+
+En AWS Academy las credenciales del laboratorio son temporales, por lo que los secrets deben
+actualizarse al iniciar cada sesión.
+
+## 13. Pruebas con Postman
+
+La colección `postman/Foro-Online.postman_collection.json` cubre los tres microservicios del sistema:
+39 solicitudes y 41 validaciones automáticas, incluidos los casos de error 400, 401, 403, 404 y 409.
+
+| Carpeta | Contenido |
+|---|---|
+| 0. Autenticación | Login de ADMIN, MODERADOR y USUARIO; credenciales incorrectas |
+| 1. usuarios-service | Registro, perfil, listado, cambio de rol, estado y eliminación |
+| 2. foro-service | Búsqueda, detalle, publicación, edición y comentarios |
+| 3. administracion-service | Banear y reactivar publicaciones y comentarios; CRUD de categorías |
+| 4. Limpieza | Elimina los datos creados durante la prueba |
+
+Uso:
+
+1. Importar la colección en Postman.
+2. Ajustar la variable de colección `baseUrl` con la URL pública de la instancia EC2
+   (la IP cambia si la instancia se reinicia).
+3. Ejecutar primero los logins de la carpeta `0. Autenticación`: guardan los tokens en variables
+   que usan las demás solicitudes. También se puede ejecutar la colección completa con *Run collection*.
+
+Desde la línea de comandos:
+
+```bash
+npx newman run postman/Foro-Online.postman_collection.json
+```
+
+## 14. Flujo de trabajo Git
+
+- `main` es la rama estable: cada cambio de código integrado en ella se despliega en AWS.
+- Los cambios se desarrollan en ramas de corta duración con un prefijo según su tipo:
+  `feature/`, `fix/`, `docs/`, `ci/`, `refactor/`.
+- Cada rama se integra a `main` mediante un Pull Request (merge commit) y se elimina después del merge.
+- Los mensajes de commit siguen la convención *Conventional Commits*: `feat:`, `fix:`, `docs:`,
+  `test:`, `ci:`, `refactor:`.
