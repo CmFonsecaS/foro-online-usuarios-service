@@ -20,30 +20,17 @@ public class AuthController {
 
     private final AuthService authService;
 
-    // =====================================================
-    // CONSTRUCTOR
-    // =====================================================
-
     public AuthController(AuthService authService) {
         this.authService = authService;
     }
 
-    // =====================================================
-    // POST: INICIAR SESION Y OBTENER JWT
-    // =====================================================
-
+    // POST: iniciar sesion y obtener JWT
     @PostMapping("/login")
-    public LoginResponse login(
-            @Valid @RequestBody LoginRequest request) {
-
+    public LoginResponse login(@Valid @RequestBody LoginRequest request) {
         try {
             return authService.login(request);
-
         } catch (BadCredentialsException ex) {
-            throw new ResponseStatusException(
-                HttpStatus.UNAUTHORIZED,
-                "Credenciales incorrectas"
-            );
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Credenciales incorrectas");
         }
     }
 }
