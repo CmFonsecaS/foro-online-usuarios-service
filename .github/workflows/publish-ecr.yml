@@ -1,0 +1,149 @@
+name: Test, publish to ECR and deploy to EC2
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Test and publish image to ECR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+    outputs:
+      image: ${{ steps.image-reference.outputs.image }}
+      service_name: ${{ steps.service.outputs.SERVICE_NAME }}
+      service_port: ${{ steps.service.outputs.SERVICE_PORT }}
+      smoke_path: ${{ steps.service.outputs.SMOKE_PATH }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Read service settings
+        id: service
+        shell: bash
+        run: |
+          sed 's/\r$//' ec2/service.env | grep -E '^[A-Z_]+=' >> "$GITHUB_OUTPUT"
+          sed 's/\r$//' ec2/service.env | grep -E '^[A-Z_]+=' >> "$GITHUB_ENV"
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Run tests
+        run: |
+          sed -i 's/\r$//' mvnw
+          chmod +x mvnw
+          ./mvnw -B test
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create ECR repository if needed
+        shell: bash
+        run: |
+          repo="foro-online/${SERVICE_NAME}"
+          echo "ECR_REPOSITORY=$repo" >> "$GITHUB_ENV"
+          if ! aws ecr describe-repositories --repository-names "$repo" >/dev/null 2>&1; then
+            aws ecr create-repository \
+              --repository-name "$repo" \
+              --image-scanning-configuration scanOnPush=true \
+              --encryption-configuration encryptionType=AES256
+          fi
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Export image reference
+        id: image-reference
+        shell: bash
+        run: echo "image=${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+  deploy-ec2:
+    name: Deploy to EC2 through Systems Manager
+    needs: publish
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: foro-online-ec2-deployment
+      cancel-in-progress: false
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID }}
+      ORACLE_CREDENTIALS_SECRET_ARN: ${{ vars.ORACLE_CREDENTIALS_SECRET_ARN }}
+      ORACLE_WALLET_S3_BUCKET: ${{ vars.ORACLE_WALLET_S3_BUCKET }}
+      ORACLE_WALLET_S3_KEY: ${{ vars.ORACLE_WALLET_S3_KEY }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Verify Actions variables
+        shell: bash
+        run: |
+          for v in EC2_INSTANCE_ID ORACLE_CREDENTIALS_SECRET_ARN ORACLE_WALLET_S3_BUCKET ORACLE_WALLET_S3_KEY; do
+            if [[ -z "${!v}" ]]; then
+              echo "::error::Falta la variable de Actions $v"
+              exit 1
+            fi
+          done
+
+      - name: Deploy image and smoke-test
+        shell: bash
+        run: >-
+          bash ec2/deploy-to-instance.sh
+          "$EC2_INSTANCE_ID"
+          "$AWS_REGION"
+          "${{ needs.publish.outputs.smoke_path }}"
+          ec2/deploy-service.sh
+          "${{ needs.publish.outputs.service_name }}"
+          "${{ needs.publish.outputs.service_port }}"
+          "${{ needs.publish.outputs.image }}"
+          "$AWS_REGION"
+          "$ORACLE_CREDENTIALS_SECRET_ARN"
+          "$ORACLE_WALLET_S3_BUCKET"
+          "$ORACLE_WALLET_S3_KEY"

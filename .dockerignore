@@ -1,0 +1,14 @@
+target/
+.git/
+.github/
+.idea/
+.vscode/
+*.iml
+ec2/
+database/
+# Credenciales: nunca dentro de la imagen
+.env
+wallet/
+Wallet_*/
+oracle-wallet/
+*.zip
